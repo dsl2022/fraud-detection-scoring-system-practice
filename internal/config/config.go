@@ -4,6 +4,7 @@
 package config
 
 import (
+	"math"
 	"os"
 	"strconv"
 	"time"
@@ -93,8 +94,8 @@ func Load() Config {
 		// dragging every request to the timeout.
 		Guard: providers.GuardConfig{
 			Budget:                    getdur("PROVIDER_BUDGET", 120*time.Millisecond),
-			ConsecutiveFailuresToTrip: uint32(getint("BREAKER_TRIP_FAILURES", 5)),
-			HalfOpenMaxRequests:       uint32(getint("BREAKER_HALFOPEN_MAX", 1)),
+			ConsecutiveFailuresToTrip: getuint32("BREAKER_TRIP_FAILURES", 5),
+			HalfOpenMaxRequests:       getuint32("BREAKER_HALFOPEN_MAX", 1),
 			OpenTimeout:               getdur("BREAKER_OPEN_TIMEOUT", 30*time.Second),
 		},
 
@@ -142,6 +143,19 @@ func getint(key string, def int) int {
 	if v, ok := os.LookupEnv(key); ok {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return def
+}
+
+// getuint32 reads a non-negative count, clamped to the valid uint32 range so a
+// malformed or out-of-range env value can't overflow on conversion (gosec
+// G115). Anything negative, too large, or unparseable falls back to def. The
+// uint64() guard keeps the bound check correct on 32-bit platforms too.
+func getuint32(key string, def uint32) uint32 {
+	if v, ok := os.LookupEnv(key); ok {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 && uint64(n) <= math.MaxUint32 {
+			return uint32(n)
 		}
 	}
 	return def

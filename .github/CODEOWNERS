@@ -1,0 +1,8 @@
+# Code ownership → auto-requests review and (with branch protection) makes the
+# owner's approval required. Tighten to specific teams as the project grows.
+
+*                     @dsl2022
+
+# Infra & pipelines warrant extra scrutiny (change control / ITGC).
+/deploy/terraform/    @dsl2022
+/.github/             @dsl2022

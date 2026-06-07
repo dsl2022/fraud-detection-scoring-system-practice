@@ -108,7 +108,10 @@ resource "aws_lb" "this" {
   security_groups    = [var.alb_security_group_id]
   subnets            = var.public_subnet_ids
   idle_timeout       = 60
-  tags               = var.tags
+  # Drop malformed/ambiguous HTTP headers at the edge (request-smuggling
+  # defense). Trivy AWS-0052 — no reason not to.
+  drop_invalid_header_fields = true
+  tags                       = var.tags
 }
 
 resource "aws_lb_target_group" "app" {

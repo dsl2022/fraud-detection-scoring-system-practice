@@ -1,0 +1,143 @@
+# Quality gates — runs on every PR (and push to main) and BLOCKS merge on
+# failure. Kept separate from the deploy workflows: this file proves the code is
+# safe to ship; app-deploy.yml / infra.yml do the shipping.
+#
+# All third-party actions are pinned to a commit SHA (not a mutable tag) — the
+# Mar-2026 trivy-action tag hijack is why. Each job starts with harden-runner in
+# audit mode to record egress (flip to block + allowlist once baselined).
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel superseded runs on the same ref (a new push obsoletes the old CI run).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go quality & security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@0080882f6c36860b6ba35c610c98ce87d4e2f26f # v2.10.2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
+        with:
+          go-version: "1.25"
+
+      - run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@1481404843c368bc19ca9406f87d6e0fc97bdcfd # v7.0.0
+        with:
+          version: v2.4.0
+
+      - name: Test (race) + coverage gate
+        run: |
+          go test -race -covermode=atomic -coverprofile=cover.out ./...
+          total=$(go tool cover -func=cover.out | awk 'END{gsub(/%/,"",$NF); print $NF}')
+          awk -v c="$total" 'BEGIN{
+            min=35
+            if (c+0 < min) { printf "FAIL: coverage %s%% < %d%% gate\n", c, min; exit 1 }
+            printf "OK: coverage %s%% (gate %d%%)\n", c, min
+          }'
+
+      - name: govulncheck (Go CVE scan — deps + call graph)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          "$(go env GOPATH)/bin/govulncheck" ./...
+
+      - name: gosec (Go SAST)
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          "$(go env GOPATH)/bin/gosec" -quiet ./...
+
+      - name: Dependency hygiene (tidy + verify)
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum || { echo "go.mod/go.sum not tidy — run 'go mod tidy'"; exit 1; }
+          go mod verify
+
+      - name: actionlint (lint the workflow files)
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@latest
+          "$(go env GOPATH)/bin/actionlint" -color
+
+  iac:
+    name: Terraform security & lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@0080882f6c36860b6ba35c610c98ce87d4e2f26f # v2.10.2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Trivy IaC misconfiguration scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: deploy/terraform
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          trivyignores: deploy/terraform/.trivyignore
+
+      - uses: terraform-linters/setup-tflint@90f302c255ef959cbfb4bd10581afecdb7ece3e6 # v4.1.1
+      - name: tflint
+        working-directory: deploy/terraform
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # avoids plugin-download rate limits
+        run: |
+          tflint --init
+          tflint --recursive
+
+  docker:
+    name: Dockerfile lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@0080882f6c36860b6ba35c610c98ce87d4e2f26f # v2.10.2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        with:
+          dockerfile: Dockerfile
+      - uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        with:
+          dockerfile: Dockerfile.lambda
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@0080882f6c36860b6ba35c610c98ce87d4e2f26f # v2.10.2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0 # gitleaks scans full history
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  dependency-review:
+    name: Dependency review (PR)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@0080882f6c36860b6ba35c610c98ce87d4e2f26f # v2.10.2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Dependency review (vulnerable / bad-license deps)
+        uses: actions/dependency-review-action@3b139cfc5fae8b618d3eae3675e383bb1769c019 # v4.5.0
+        with:
+          fail-on-severity: high
