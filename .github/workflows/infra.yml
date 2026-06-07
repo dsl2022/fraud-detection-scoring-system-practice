@@ -1,0 +1,104 @@
+# Infrastructure CI/CD (Terraform).
+#
+#   * On PR (changes under deploy/terraform): fmt-check, validate, and PLAN — the
+#     plan is posted as a PR comment so a human reviews the diff BEFORE merge.
+#   * On merge to main: APPLY via a dedicated, least-privilege OIDC role.
+#
+# Separation of duties / ITGC change control: `main` is a protected branch with
+# required reviews. Plan runs under a read-only role; apply under a separate
+# write role. No long-lived keys — both assumed via OIDC. Terraform has no
+# auto-rollback: to roll back, revert the PR and re-apply the prior known-good state.
+
+name: infra
+
+on:
+  pull_request:
+    paths: ["deploy/terraform/**", ".github/workflows/infra.yml"]
+  push:
+    branches: [main]
+    paths: ["deploy/terraform/**"]
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Target environment"
+        default: "dev"
+        type: choice
+        options: [dev, stage, prod]
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write # to post the plan comment
+
+env:
+  AWS_REGION: us-east-1
+  ENV: ${{ github.event.inputs.env || 'dev' }}
+  TF_VAR_jwt_secret: ${{ secrets.JWT_SECRET }}
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: deploy/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.6"
+
+      - name: Configure AWS credentials (OIDC, read-only plan role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend-config=envs/${ENV}.backend.hcl
+      - run: terraform validate
+
+      - name: Plan
+        id: plan
+        run: |
+          terraform plan -var-file=envs/${ENV}.tfvars -no-color -out=tfplan | tee plan.txt
+          echo "summary<<EOF" >> "$GITHUB_OUTPUT"
+          tail -c 60000 plan.txt >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Comment plan on PR
+        uses: actions/github-script@v7
+        env:
+          PLAN: ${{ steps.plan.outputs.summary }}
+        with:
+          script: |
+            const body = `#### Terraform plan (\`${process.env.ENV}\`)\n\`\`\`\n${process.env.PLAN}\n\`\`\``;
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
+
+  apply:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    # GitHub Environment protection rules add a manual approval gate for prod.
+    environment: ${{ github.event.inputs.env || 'dev' }}
+    defaults:
+      run:
+        working-directory: deploy/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.6"
+
+      - name: Configure AWS credentials (OIDC, apply role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_APPLY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - run: terraform init -backend-config=envs/${ENV}.backend.hcl
+      - run: terraform apply -auto-approve -var-file=envs/${ENV}.tfvars

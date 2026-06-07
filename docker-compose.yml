@@ -1,0 +1,88 @@
+# Local end-to-end stack for the fraud-signals platform.
+#
+#   POST /v1/score  ->  api  ->  SQS (LocalStack)  ->  worker  ->  DynamoDB audit
+#
+# LocalStack stands in for SQS + DynamoDB so the whole async pipeline runs on a
+# laptop with no AWS account. The `worker` service is the local stand-in for the
+# Lambda consumer (cmd/consumer); it drives the SAME consumer core.
+#
+# Usage:
+#   docker compose up --build
+#   curl -s -XPOST localhost:8080/v1/score -d '{"applicant_id":"a1","product":"checking"}'
+#   # then inspect the audit table:
+#   docker compose exec localstack awslocal dynamodb scan --table-name fraud-audit
+
+services:
+  localstack:
+    image: localstack/localstack:3
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=sqs,dynamodb
+      - DEBUG=0
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:4566/_localstack/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot: provisions the queue, DLQ and table, then exits.
+  setup:
+    image: amazon/aws-cli:2.15.30
+    depends_on:
+      localstack:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "/init/init.sh"]
+    volumes:
+      - ./deploy/local/init.sh:/init/init.sh:ro
+    environment:
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+
+  api:
+    image: golang:1.25
+    working_dir: /app
+    command: ["go", "run", "./cmd/server"]
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+    volumes:
+      - .:/app
+      - gomod:/go/pkg/mod
+    environment:
+      - PORT=8080
+      - GRPC_PORT=9090
+      - AUTH_ENABLED=false
+      - DEMO_ENDPOINTS=true
+      - PERSIST_MODE=as_you_go
+      - ASYNC_ENABLED=true
+      - AUDIT_QUEUE_URL=http://localstack:4566/000000000000/fraud-audit-events
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_REGION=us-east-1
+
+  worker:
+    image: golang:1.25
+    working_dir: /app
+    command: ["go", "run", "./cmd/worker"]
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    volumes:
+      - .:/app
+      - gomod:/go/pkg/mod
+    environment:
+      - AUDIT_QUEUE_URL=http://localstack:4566/000000000000/fraud-audit-events
+      - AUDIT_TABLE=fraud-audit
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_REGION=us-east-1
+
+volumes:
+  gomod:

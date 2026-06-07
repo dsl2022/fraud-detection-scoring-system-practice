@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+// Package is versioned (v1) to mirror the REST URI versioning: a future v2 can
+// be added as a new proto package + service without breaking v1 clients.
+package fraudsignals.v1;
+
+// go_package controls where the generated Go lands and its import path.
+option go_package = "github.com/blocklocmedia/fraud-signals/internal/grpcapi/pb;pb";
+
+// ScoringService exposes the same scoring capability as POST /v1/score for
+// internal (service-to-service) callers, who get the efficiency and typed
+// contract of gRPC instead of JSON.
+service ScoringService {
+  rpc Score(ScoreRequest) returns (ScoreResponse);
+}
+
+// Application mirrors the REST domain.Application. Field numbers are the wire
+// contract: never renumber/reuse them — add new fields with new numbers.
+message Application {
+  string applicant_id = 1;
+  string product = 2;
+  // demographic
+  string full_name = 3;
+  string email = 4;
+  string country = 5;
+  int32 age_years = 6;
+  // transaction / behavioural
+  double requested_amount = 7;
+  int32 account_age_days = 8;
+  int32 recent_txn_count = 9;
+}
+
+message ScoreRequest {
+  Application application = 1;
+}
+
+// Decision is an enum on the wire (typed, compact) but maps to the same
+// APPROVE/DECLINE/MANUAL_REVIEW strings used in REST/audit.
+enum Decision {
+  DECISION_UNSPECIFIED = 0;
+  DECISION_APPROVE = 1;
+  DECISION_DECLINE = 2;
+  DECISION_MANUAL_REVIEW = 3;
+}
+
+message ScoreResponse {
+  double score = 1;
+  Decision decision = 2;
+  repeated string signals_used = 3;
+  string logic_version = 4;
+}

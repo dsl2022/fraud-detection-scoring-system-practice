@@ -1,0 +1,10 @@
+output "service_name" { value = aws_ecs_service.app.name }
+output "task_definition_arn" { value = aws_ecs_task_definition.app.arn }
+output "task_role_arn" { value = aws_iam_role.task.arn }
+output "execution_role_arn" { value = aws_iam_role.execution.arn }
+output "queue_url" { value = aws_sqs_queue.events.url }
+output "queue_arn" { value = aws_sqs_queue.events.arn }
+output "dlq_url" { value = aws_sqs_queue.dlq.url }
+output "audit_table_name" { value = aws_dynamodb_table.audit.name }
+output "lambda_function_name" { value = aws_lambda_function.consumer.function_name }
+output "alarms_topic_arn" { value = aws_sns_topic.alarms.arn }

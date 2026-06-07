@@ -1,0 +1,109 @@
+# Application CI/CD: quality gates -> build + scan images -> push to ECR ->
+# deploy the app (rolling) via a scoped Terraform apply.
+#
+# Terraform stays the source of truth for the task definition; this workflow just
+# feeds it the freshly-built, immutably-tagged image. ECS performs a ROLLING
+# update (min 100% / max 200% healthy) when the task def changes.
+#
+# Separation of duties (ITGC): protect `main` with required reviews; this
+# workflow assumes a least-privilege role via OIDC — NO long-lived AWS keys.
+
+name: app-deploy
+
+on:
+  push:
+    branches: [main]
+    paths: ["cmd/**", "internal/**", "go.mod", "go.sum", "Dockerfile*"]
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Target environment"
+        default: "dev"
+        type: choice
+        options: [dev, stage, prod]
+
+permissions:
+  contents: read
+  id-token: write # required for AWS OIDC
+
+env:
+  AWS_REGION: us-east-1
+  ENV: ${{ github.event.inputs.env || 'dev' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - run: go vet ./...
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+      - name: Unit tests (race)
+        run: go test -race ./...
+
+  build-deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Resolve image URIs
+        id: img
+        run: |
+          REG="${{ steps.ecr.outputs.registry }}"
+          echo "server=$REG/fraud-${ENV}-server:${GITHUB_SHA}"   >> "$GITHUB_OUTPUT"
+          echo "consumer=$REG/fraud-${ENV}-consumer:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build server image
+        run: docker build -t "${{ steps.img.outputs.server }}" -f Dockerfile .
+
+      - name: Build consumer image
+        run: docker build -t "${{ steps.img.outputs.consumer }}" -f Dockerfile.lambda .
+
+      # Fail the pipeline on HIGH/CRITICAL vulns before anything is pushed.
+      - name: Scan server image (Trivy)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ steps.img.outputs.server }}
+          format: table
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+
+      - name: Push images
+        run: |
+          docker push "${{ steps.img.outputs.server }}"
+          docker push "${{ steps.img.outputs.consumer }}"
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.6"
+
+      # Scoped apply: only the app layer changes (new image -> new task def ->
+      # rolling deploy + Lambda image update). Infra structure changes go through
+      # infra.yml's reviewed plan instead.
+      - name: Deploy app (rolling)
+        working-directory: deploy/terraform
+        env:
+          TF_VAR_jwt_secret: ${{ secrets.JWT_SECRET }}
+        run: |
+          terraform init -backend-config=envs/${ENV}.backend.hcl
+          terraform apply -auto-approve -target=module.app \
+            -var-file=envs/${ENV}.tfvars \
+            -var="server_image=${{ steps.img.outputs.server }}" \
+            -var="consumer_image=${{ steps.img.outputs.consumer }}"

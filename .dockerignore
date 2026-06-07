@@ -1,0 +1,10 @@
+# Keep the build context small and deterministic.
+.git
+.github
+deploy/terraform
+docs
+*.md
+docker-compose.yml
+Dockerfile*
+.dockerignore
+**/*_test.go

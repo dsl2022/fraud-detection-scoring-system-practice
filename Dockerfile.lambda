@@ -1,0 +1,17 @@
+# Lambda consumer packaged as a CONTAINER IMAGE (pushed to ECR like the service,
+# so there's no separate S3 artifact bucket / chicken-and-egg on first apply).
+#
+# Built on the AWS-provided base for custom runtimes; the compiled Go binary is
+# the `bootstrap` that speaks the Lambda Runtime API (via aws-lambda-go).
+
+FROM golang:1.25 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -trimpath -ldflags="-s -w" -o /out/bootstrap ./cmd/consumer
+
+FROM public.ecr.aws/lambda/provided:al2023
+COPY --from=build /out/bootstrap ${LAMBDA_RUNTIME_DIR}/bootstrap
+CMD ["bootstrap"]

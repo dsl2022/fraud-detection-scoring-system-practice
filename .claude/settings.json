@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go vet *)",
+      "Bash(go test *)",
+      "Bash(gofmt -l -w internal/ cmd/)",
+      "Bash(docker version *)",
+      "Bash(docker compose *)",
+      "Bash(gofmt -l internal/ cmd/)"
+    ]
+  }
+}

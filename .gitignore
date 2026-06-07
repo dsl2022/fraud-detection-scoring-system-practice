@@ -1,0 +1,65 @@
+# ---- Terraform ----
+# Local state + backups: may contain secrets and account details. NEVER commit.
+*.tfstate
+*.tfstate.*
+# Provider plugins / module cache (re-fetched by `terraform init`).
+**/.terraform/*
+# Saved plan output.
+*.tfplan
+tfplan
+# Crash logs.
+crash.log
+crash.*.log
+# Local override files (developer-specific).
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+# .terraformrc / CLI config.
+.terraformrc
+terraform.rc
+
+# Deliberately NOT ignored (these SHOULD be committed):
+#   envs/*.tfvars            – non-secret per-env inputs
+#   envs/*.backend.hcl       – backend wiring
+#   .terraform.lock.hcl      – provider version lock
+
+# ---- Go ----
+# Test/build artifacts.
+*.test
+*.out
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/bin/
+/dist/
+coverage.out
+coverage.html
+*.cover
+# Profiling output (pprof / benchmarks).
+*.prof
+*.pprof
+
+# ---- Secrets / local env ----
+.env
+.env.*
+*.pem
+*.key
+
+# ---- Tooling / installers ----
+AWSCLIV2.pkg
+
+# ---- Claude Code ----
+# Commit .claude/settings.json (shared config); ignore personal/local overrides.
+.claude/settings.local.json
+.claude/*.local.json
+
+# ---- OS / editor ----
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/*
+!.vscode/extensions.json
