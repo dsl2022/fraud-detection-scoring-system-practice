@@ -8,6 +8,27 @@
 locals {
   # Prod gets HA NAT regardless of the tfvar default.
   single_nat = var.env_name == "prod" ? false : var.single_nat_gateway
+
+  # Image source of truth (decouples the two pipelines that share this state):
+  #   * app-deploy.yml passes -var server_image/consumer_image (the SHA it just
+  #     built) AND records it to SSM.
+  #   * infra.yml does a full apply with NO image var; without this it would
+  #     recompute the image to ":latest" and clobber whatever app-deploy
+  #     deployed. Reading the LAST-DEPLOYED image from SSM keeps a structure-only
+  #     infra apply from rolling the app back. Explicit -var still wins.
+  server_image   = var.server_image != "" ? var.server_image : data.aws_ssm_parameter.server_image.value
+  consumer_image = var.consumer_image != "" ? var.consumer_image : data.aws_ssm_parameter.consumer_image.value
+}
+
+# Last-deployed image URIs, written by app-deploy.yml after a successful push.
+# Seeded once at bring-up (see envs/README). Not managed by TF on purpose —
+# images are injected out of band, same philosophy as jwt_secret.
+data "aws_ssm_parameter" "server_image" {
+  name = "/fraud-signals/${var.env_name}/server_image"
+}
+
+data "aws_ssm_parameter" "consumer_image" {
+  name = "/fraud-signals/${var.env_name}/consumer_image"
 }
 
 module "network" {
@@ -51,9 +72,10 @@ module "app" {
   private_subnet_ids      = module.network.private_subnet_ids
   tasks_security_group_id = module.network.tasks_security_group_id
 
-  # images (CI sets these; fall back to the ECR repos at :latest for first apply)
-  server_image   = var.server_image != "" ? var.server_image : "${module.platform.server_repository_url}:latest"
-  consumer_image = var.consumer_image != "" ? var.consumer_image : "${module.platform.consumer_repository_url}:latest"
+  # Image to run: explicit -var (app-deploy) else the last-deployed image from
+  # SSM (see locals above). Never a bare ":latest" that may not exist.
+  server_image   = local.server_image
+  consumer_image = local.consumer_image
 
   # sizing / config
   desired_count          = var.desired_count

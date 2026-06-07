@@ -39,6 +39,12 @@ jobs:
   plan:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # Plans are read-only and frequent: scope per-PR and cancel superseded runs
+    # when new commits land. Kept SEPARATE from the apply group so a plan never
+    # blocks (or is blocked by) a deploy.
+    concurrency:
+      group: terraform-plan-${{ github.ref }}
+      cancel-in-progress: true
     defaults:
       run:
         working-directory: deploy/terraform
@@ -61,7 +67,7 @@ jobs:
       - name: Plan
         id: plan
         run: |
-          terraform plan -var-file=envs/${ENV}.tfvars -no-color -out=tfplan | tee plan.txt
+          terraform plan -lock-timeout=5m -var-file=envs/${ENV}.tfvars -no-color -out=tfplan | tee plan.txt
           echo "summary<<EOF" >> "$GITHUB_OUTPUT"
           tail -c 60000 plan.txt >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
@@ -85,6 +91,13 @@ jobs:
     runs-on: ubuntu-latest
     # GitHub Environment protection rules add a manual approval gate for prod.
     environment: ${{ github.event.inputs.env || 'dev' }}
+    # Serialize ALL Terraform applies for this env across BOTH pipelines (infra +
+    # app-deploy share one state). The SAME group string lives in app-deploy.yml,
+    # so only one apply runs at a time. cancel-in-progress:false -> a queued run
+    # waits its turn; we never abandon a half-finished apply.
+    concurrency:
+      group: terraform-apply-${{ github.event.inputs.env || 'dev' }}
+      cancel-in-progress: false
     defaults:
       run:
         working-directory: deploy/terraform
@@ -101,4 +114,4 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - run: terraform init -backend-config=envs/${ENV}.backend.hcl
-      - run: terraform apply -auto-approve -var-file=envs/${ENV}.tfvars
+      - run: terraform apply -auto-approve -lock-timeout=5m -var-file=envs/${ENV}.tfvars

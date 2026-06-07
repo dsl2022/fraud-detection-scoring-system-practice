@@ -32,6 +32,23 @@ aws dynamodb create-table --table-name fraud-signals-tflock \
   --billing-mode PAY_PER_REQUEST --region us-east-1
 ```
 
+## Image source of truth (SSM)
+
+The root reads the last-deployed image URIs from SSM
+(`/fraud-signals/<env>/{server,consumer}_image`) when no `-var` is given, so a
+full `infra.yml` apply doesn't clobber what `app-deploy.yml` deployed.
+`app-deploy.yml` writes these params on every deploy — but they must EXIST before
+the first full apply. Seed them once (point at any image already in ECR):
+
+```bash
+REG=$(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-east-1.amazonaws.com
+TAG=<a tag already pushed to ECR, e.g. the current commit sha>
+aws ssm put-parameter --name /fraud-signals/dev/server_image   --type String --overwrite \
+  --value "$REG/fraud-dev-server:$TAG"   --region us-east-1
+aws ssm put-parameter --name /fraud-signals/dev/consumer_image --type String --overwrite \
+  --value "$REG/fraud-dev-consumer:$TAG" --region us-east-1
+```
+
 ## Notes
 
 - `jwt_secret`, `server_image`, `consumer_image` are injected by CI (`-var` /
