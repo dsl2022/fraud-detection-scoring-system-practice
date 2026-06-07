@@ -51,6 +51,14 @@ jobs:
   build-deploy:
     needs: test
     runs-on: ubuntu-latest
+    # SAME apply group as infra.yml: the two pipelines share one Terraform state,
+    # so this guarantees they never apply at once — and two app-deploys serialize
+    # too, so a newer deploy can't be overtaken by an older one. (The build/scan
+    # steps serialize with it too; acceptable, and only when something else is
+    # already applying.) cancel-in-progress:false -> queue, never kill a running apply.
+    concurrency:
+      group: terraform-apply-${{ github.event.inputs.env || 'dev' }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
@@ -95,6 +103,16 @@ jobs:
           docker push "${{ steps.img.outputs.server }}"
           docker push "${{ steps.img.outputs.consumer }}"
 
+      # Record what we just deployed so a full `infra.yml` apply (which gets no
+      # image -var) reads the SAME image from SSM instead of clobbering to
+      # ":latest". Written BEFORE the apply so even the first deploy is consistent.
+      - name: Record deployed image (SSM)
+        run: |
+          aws ssm put-parameter --name "/fraud-signals/${ENV}/server_image" \
+            --type String --overwrite --value "${{ steps.img.outputs.server }}"
+          aws ssm put-parameter --name "/fraud-signals/${ENV}/consumer_image" \
+            --type String --overwrite --value "${{ steps.img.outputs.consumer }}"
+
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.6.6"
@@ -108,7 +126,7 @@ jobs:
           TF_VAR_jwt_secret: ${{ secrets.JWT_SECRET }}
         run: |
           terraform init -backend-config=envs/${ENV}.backend.hcl
-          terraform apply -auto-approve -target=module.app \
+          terraform apply -auto-approve -lock-timeout=5m -target=module.app \
             -var-file=envs/${ENV}.tfvars \
             -var="server_image=${{ steps.img.outputs.server }}" \
             -var="consumer_image=${{ steps.img.outputs.consumer }}"
