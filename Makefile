@@ -1,8 +1,9 @@
 # One command per lifecycle step. ENV selects the Terraform workspace inputs.
-ENV        ?= dev
-AWS_REGION ?= us-east-1
-TF_DIR     := deploy/terraform
-GOFLAGS    :=
+ENV          ?= dev
+AWS_REGION   ?= us-east-1
+TF_DIR       := deploy/terraform
+GOFLAGS      :=
+AUTO_APPROVE ?=   # set non-empty (e.g. AUTO_APPROVE=1) for non-interactive CI runs
 
 .DEFAULT_GOAL := help
 
@@ -90,7 +91,7 @@ tf-destroy: ## DESTROY all app+infra for ENV (state backend + SSM image params u
 	  echo ">> Releasing audit table $$TABLE from Terraform and deleting it"; \
 	  terraform -chdir=$(TF_DIR) state rm 'module.app.aws_dynamodb_table.audit' 2>/dev/null || true; \
 	  aws dynamodb delete-table --region $(AWS_REGION) --table-name "$$TABLE" >/dev/null 2>&1 || true
-	terraform -chdir=$(TF_DIR) destroy -var-file=envs/$(ENV).tfvars
+	terraform -chdir=$(TF_DIR) destroy $(if $(AUTO_APPROVE),-auto-approve) -lock-timeout=5m -var-file=envs/$(ENV).tfvars
 
 .PHONY: tf-destroy-check
 tf-destroy-check: ## Verify the billable resources for ENV are gone after a destroy
