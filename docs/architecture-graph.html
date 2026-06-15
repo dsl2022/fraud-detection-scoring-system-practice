@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Fraud Signals — Interactive Architecture Graph</title>
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --panel2:#1c2230; --line:#2a3240;
+    --txt:#d7e0ea; --muted:#8b98a8; --accent:#58a6ff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);
+    font:13px/1.45 ui-sans-serif,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  #app{display:flex;height:100vh;width:100vw;overflow:hidden}
+  #graph{flex:1;position:relative}
+  svg{width:100%;height:100%;display:block;cursor:grab}
+  svg:active{cursor:grabbing}
+
+  /* ---- sidebar ---- */
+  #side{width:340px;min-width:340px;background:var(--panel);border-left:1px solid var(--line);
+    display:flex;flex-direction:column;overflow:hidden}
+  #side header{padding:14px 16px;border-bottom:1px solid var(--line)}
+  #side h1{font-size:15px;margin:0 0 2px}
+  #side .sub{color:var(--muted);font-size:11px}
+  .controls{padding:12px 16px;border-bottom:1px solid var(--line)}
+  .controls input[type=text]{width:100%;padding:7px 9px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:7px;color:var(--txt);outline:none}
+  .controls input[type=text]:focus{border-color:var(--accent)}
+  .row{display:flex;align-items:center;gap:7px;margin-top:9px;flex-wrap:wrap}
+  .chk{display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;
+    padding:3px 8px;border:1px solid var(--line);border-radius:20px;user-select:none;color:var(--muted)}
+  .chk input{accent-color:var(--accent);margin:0}
+  .chk.on{color:var(--txt);border-color:#3b4655}
+  button.mini{background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+    border-radius:7px;padding:6px 10px;cursor:pointer;font-size:12px}
+  button.mini:hover{border-color:var(--accent)}
+
+  #detail{padding:14px 16px;overflow:auto;flex:1}
+  #detail .empty{color:var(--muted)}
+  .badge{display:inline-block;font-size:10px;padding:2px 7px;border-radius:20px;
+    background:var(--panel2);border:1px solid var(--line);margin:0 5px 5px 0;color:var(--muted)}
+  #detail h2{font-size:15px;margin:2px 0 2px;word-break:break-word}
+  #detail .pkg{color:var(--accent);font-size:12px;font-family:ui-monospace,Menlo,monospace}
+  #detail .sect{margin-top:13px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+  #detail ul{margin:5px 0 0;padding-left:0;list-style:none}
+  #detail li{padding:4px 0;border-bottom:1px solid #1f2530;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#c9d4e0}
+  #detail li .arrow{color:var(--muted)}
+  .relnode{cursor:pointer;color:var(--accent)}
+  .relnode:hover{text-decoration:underline}
+  .desc{margin-top:8px;color:#c2ccd8}
+
+  /* ---- legend (overlay) ---- */
+  #legend{position:absolute;left:14px;bottom:14px;background:rgba(22,27,34,.92);
+    border:1px solid var(--line);border-radius:10px;padding:11px 13px;font-size:11px;max-width:260px}
+  #legend b{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+  .lgrow{display:flex;align-items:center;gap:8px;margin-top:6px}
+  .lgline{width:26px;height:0;border-top-width:2px}
+  .swatch{width:12px;height:12px;border-radius:3px;flex:none}
+  #hint{position:absolute;right:14px;top:12px;background:rgba(22,27,34,.9);
+    border:1px solid var(--line);border-radius:8px;padding:7px 11px;font-size:11px;color:var(--muted)}
+
+  .node text{font-family:ui-monospace,Menlo,monospace;font-size:10.5px;fill:var(--txt);pointer-events:none}
+  .node{cursor:pointer}
+  .link{fill:none}
+  .colhdr{fill:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:600}
+  .lanehdr{fill:#5b6675;font-size:10px;text-transform:uppercase;letter-spacing:.1em}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="graph">
+    <svg id="svg"></svg>
+    <div id="hint">drag nodes · scroll to zoom · click a node to focus · click empty space to reset</div>
+    <div id="legend"></div>
+  </div>
+  <aside id="side">
+    <header>
+      <h1>Fraud Signals — Architecture</h1>
+      <div class="sub">Hexagonal Go service · click any node to inspect it</div>
+    </header>
+    <div class="controls">
+      <input id="search" type="text" placeholder="Search type / interface / function…"/>
+      <div class="row" id="edgeToggles"></div>
+      <div class="row">
+        <button class="mini" id="resetBtn">Reset view</button>
+        <button class="mini" id="flowBtn">Trace request flow</button>
+      </div>
+    </div>
+    <div id="detail"><div class="empty">Nothing selected.<br><br>This graph shows every package, interface, struct and the key functions of the <b>fraud-signals</b> service, plus how they wire together: <span style="color:#3fb950">implements</span>, <span style="color:#8b98a8">depends/calls</span>, <span style="color:#d29922">injected-into</span>, and <span style="color:#6e7681">uses domain types</span>.<br><br>Click a node to see its members and neighbours.</div></div>
+  </aside>
+</div>
+
+<script>
+/* ============================================================
+   DATA  — extracted from the codebase
+   kinds: iface | struct | func | entry | data
+   col   = architectural column (left→right request flow)
+   lane  = main (center band) | cross (cross-cutting, bottom band)
+============================================================ */
+const PKG_COLOR = {
+  cmd:'#e3b341', httpapi:'#79c0ff', grpcapi:'#a5d6ff', service:'#d2a8ff',
+  scorer:'#ff7b72', ports:'#ffa657', providers:'#7ee787', audit:'#56d364',
+  events:'#39c5cf', consumer:'#f0883e', metrics:'#bc8cff',
+  domain:'#8b949e', auth:'#ffab70', reqid:'#c9a0ff', config:'#6ea8fe', awscfg:'#6ea8fe'
+};
+
+const NODES = [
+  // ---- composition roots (col 0) ----
+  {id:'cmd/server', pkg:'cmd', kind:'entry', col:0, lane:'main',
+   desc:'Composition root for the synchronous edge. Builds the metrics recorder, guards the providers, builds the Scorer → ScoringService, picks an auth Validator, then starts the HTTP and gRPC servers concurrently with graceful shutdown.',
+   members:['main()','pickValidator()','buildDemo()','graceful shutdown via Probe.SetReady(false)']},
+  {id:'cmd/consumer', pkg:'cmd', kind:'entry', col:0, lane:'main',
+   desc:'AWS Lambda entrypoint for the async tier. Adapts SQSEvent records → consumer.Message and returns partial-batch failures.',
+   members:['lambda.Start(handler)','SQSEvent → []consumer.Message','returns BatchItemFailures']},
+  {id:'cmd/worker', pkg:'cmd', kind:'entry', col:0, lane:'main',
+   desc:'Local/Docker equivalent of the Lambda: long-polls SQS itself, then deletes only the messages that processed successfully.',
+   members:['poll()','ReceiveMessage → ProcessBatch → DeleteMessageBatch']},
+
+  // ---- transports (col 1) ----
+  {id:'httpapi.NewRouter', label:'NewRouter / RouterDeps', pkg:'httpapi', kind:'func', col:1, lane:'main',
+   desc:'Builds the net/http ServeMux (Go 1.22 method routing) and wraps it in the middleware chain. RouterDeps is the injection struct.',
+   members:['NewRouter(d RouterDeps) http.Handler','RouterDeps{Scorer, Demo, Auth, Probe, Log}','Demo{Naive, Guarded}']},
+  {id:'httpapi.scoreHandler', label:'scoreHandler', pkg:'httpapi', kind:'func', col:1, lane:'main',
+   desc:'Decodes the JSON application, validates it, calls the scorerPort, and writes the ScoreResult.',
+   members:['scoreHandler(s scorerPort, log)','validate(app) (string,bool)']},
+  {id:'httpapi.scorerPort', label:'scorerPort', pkg:'httpapi', kind:'iface', col:1, lane:'main',
+   desc:'The driving port for HTTP. Anything with Score(ctx,app)→ScoreResult satisfies it — the ScoringService does.',
+   members:['Score(ctx, domain.Application) domain.ScoreResult']},
+  {id:'httpapi.middleware', label:'middleware chain', pkg:'httpapi', kind:'func', col:1, lane:'main',
+   desc:'requestID → logging → recover → auth, composed by chain(). statusRecorder captures the status code for logging.',
+   members:['chain()','requestIDMW','loggingMW','recoverMW','authMW(v auth.Validator)','statusRecorder']},
+  {id:'httpapi.Probe', label:'Probe', pkg:'httpapi', kind:'struct', col:1, lane:'main',
+   desc:'Atomic readiness flag behind /readyz. Flipped to false first during shutdown so the ALB drains the target.',
+   members:['NewProbe()','SetReady(bool)','Ready() bool','livenessHandler','readinessHandler']},
+  {id:'grpcapi.Server', label:'Server', pkg:'grpcapi', kind:'struct', col:1, lane:'main',
+   desc:'Implements the generated pb.ScoringServiceServer. Translates protobuf ⇄ domain and delegates to the scorerPort.',
+   members:['NewServer(scorer scorerPort)','Score(ctx, *pb.ScoreRequest)','toDomain()','toProtoDecision()','Register(gs, srv)']},
+  {id:'grpcapi.scorerPort', label:'scorerPort', pkg:'grpcapi', kind:'iface', col:1, lane:'main',
+   desc:'The driving port for gRPC — identical shape to the HTTP one. Satisfied by the ScoringService.',
+   members:['Score(ctx, domain.Application) domain.ScoreResult']},
+  {id:'grpcapi.interceptors', label:'ChainUnary / interceptors', pkg:'grpcapi', kind:'func', col:1, lane:'main',
+   desc:'The gRPC mirror of the HTTP middleware: request-id, logging, and auth as unary interceptors.',
+   members:['ChainUnary(v auth.Validator, log)','requestIDInterceptor','loggingInterceptor','authInterceptor','metadataValue()']},
+
+  // ---- service (col 2) ----
+  {id:'service.ScoringService', label:'ScoringService', pkg:'service', kind:'struct', col:2, lane:'main',
+   desc:'Application service. Hashes the inputs (audit), runs the scorer while observing each provider response, builds the audit Record, and publishes a ScoringEvent for the async tier. Satisfies both transports’ scorerPort.',
+   members:['New(scorer, publisher, mode, log)','Score(ctx, app) ScoreResult','fields: scorer · publisher · mode · log · now']},
+  {id:'service.Scorer', label:'Scorer (port)', pkg:'service', kind:'iface', col:2, lane:'main',
+   desc:'The service’s own narrow port onto the core. Decouples the service from the concrete scorer.Scorer.',
+   members:['ScoreObserved(ctx, app, obs func(RiskData)) ScoreResult']},
+
+  // ---- scorer core (col 3) ----
+  {id:'scorer.Scorer', label:'Scorer', pkg:'scorer', kind:'struct', col:3, lane:'main',
+   desc:'The core. Stage A fans out concurrently to INDEPENDENT providers under a stage budget; Stage B makes the enriched DEPENDENT call; then decide() turns collected signals into a ScoreResult. Satisfies service.Scorer.',
+   members:['New(independent, dependent, cfg, log)','Score()','ScoreObserved(ctx, app, obs)','runStageA()']},
+  {id:'scorer.NaiveScorer', label:'NaiveScorer', pkg:'scorer', kind:'struct', col:3, lane:'main',
+   desc:'Demo foil to Scorer: same shape but no per-source guarding — shows how a slow vendor blows the latency budget.',
+   members:['NewNaive(...)','Score()','runStageA()']},
+  {id:'scorer.Config', label:'Config', pkg:'scorer', kind:'struct', col:3, lane:'main',
+   desc:'Scoring knobs: outer Budget, StageABudget, Approve/Decline thresholds, MinSignals, MinConfidence, LogicVersion.',
+   members:['Budget · StageABudget','ApproveBelow · DeclineAbove','MinSignals · MinConfidence','LogicVersion']},
+  {id:'scorer.pipeline', label:'pipeline (callDependent / decide)', pkg:'scorer', kind:'func', col:3, lane:'main',
+   desc:'Pure scoring helpers shared by both scorers.',
+   members:['callDependent(ctx, dep, app, prior, log) (RiskData,bool)','decide(cfg, collected) ScoreResult']},
+
+  // ---- ports (col 4) ----
+  {id:'ports.Provider', label:'Provider', pkg:'ports', kind:'iface', col:4, lane:'main',
+   desc:'THE driven port. The core depends only on this; every vendor adapter implements it. The seam of the hexagon.',
+   members:['Name() string','Fetch(ctx, domain.Application) (domain.RiskData, error)']},
+
+  // ---- driven adapters: providers (col 5) ----
+  {id:'providers.Simulated', label:'Simulated', pkg:'providers', kind:'struct', col:5, lane:'main',
+   desc:'Deterministic fake vendor (latency, failure, weight, confidence injectable). The Stage-1 zero-dependency adapter.',
+   members:['NewSimulated(cfg SimConfig)','Name()','Fetch()','deriveScore()','implements ports.Provider']},
+  {id:'providers.guardedProvider', label:'guardedProvider', pkg:'providers', kind:'struct', col:5, lane:'main',
+   desc:'Decorator that wraps any Provider with a per-source budget, a gobreaker circuit breaker, and metrics. Itself a Provider, so the core never knows.',
+   members:['Guard(inner, cfg, rec) ports.Provider','GuardSet(set, cfg, rec) Set','Name()','Fetch()','classify(err)→metrics.Outcome']},
+  {id:'providers.Set', label:'Set / Default / DemoSick', pkg:'providers', kind:'func', col:5, lane:'main',
+   desc:'Set{Independent, Dependent} bundles the vendor roster. DefaultProviders() is the baseline; DemoSickProviders() injects one 800 ms vendor.',
+   members:['Set{Independent []Provider, Dependent Provider}','DefaultProviders()','DemoSickProviders()','Name* constants']},
+
+  // ---- driven adapters: audit (col 5) ----
+  {id:'audit.Sink', label:'Sink', pkg:'audit', kind:'iface', col:5, lane:'main',
+   desc:'Driven port for the immutable audit trail.',
+   members:['PutDecision(ctx, Record) error','PutProviderResponse(ctx, ProviderRecord) error']},
+  {id:'audit.LogSink', label:'LogSink', pkg:'audit', kind:'struct', col:5, lane:'main',
+   desc:'Writes audit records to structured slog. implements audit.Sink.', members:['NewLogSink(log)','PutDecision','PutProviderResponse']},
+  {id:'audit.MemorySink', label:'MemorySink', pkg:'audit', kind:'struct', col:5, lane:'main',
+   desc:'In-memory write-once sink for tests (dedups on request id). implements audit.Sink.', members:['NewMemorySink()','Snapshot()','seen map dedup']},
+  {id:'audit.DynamoSink', label:'DynamoSink', pkg:'audit', kind:'struct', col:5, lane:'main',
+   desc:'DynamoDB conditional-put (attribute_not_exists) gives write-once immutability. implements audit.Sink.',
+   members:['NewDynamoSink(client, table)','putOnce()','ErrAlreadyExists on duplicate']},
+  {id:'audit.Record', label:'Record / ProviderRecord / HashInputs', pkg:'audit', kind:'data', col:5, lane:'main',
+   desc:'The audit value objects + the input hasher that makes each decision reproducible.',
+   members:['HashInputs(app) string','Record{RequestID, InputHash, Score, Decision, …}','ProviderRecord{Source, Score, Confidence, …}','PersistMode = Combined | AsYouGo']},
+
+  // ---- driven adapters: events (col 5) ----
+  {id:'events.Publisher', label:'Publisher', pkg:'events', kind:'iface', col:5, lane:'main',
+   desc:'Driven port that hands a scored decision to the async tier.',
+   members:['Publish(ctx, ScoringEvent) error']},
+  {id:'events.LogPublisher', label:'LogPublisher', pkg:'events', kind:'struct', col:5, lane:'main',
+   desc:'Synchronous fallback publisher (logs). implements events.Publisher.', members:['NewLogPublisher(log)','Publish()']},
+  {id:'events.MemoryPublisher', label:'MemoryPublisher', pkg:'events', kind:'struct', col:5, lane:'main',
+   desc:'Captures events in memory for test assertions. implements events.Publisher.', members:['NewMemoryPublisher()','Snapshot()']},
+  {id:'events.SQSPublisher', label:'SQSPublisher', pkg:'events', kind:'struct', col:5, lane:'main',
+   desc:'Marshals the event and sends it to SQS. implements events.Publisher.', members:['NewSQSPublisher(client, queueURL)','Publish()']},
+  {id:'events.ScoringEvent', label:'ScoringEvent', pkg:'events', kind:'data', col:5, lane:'main',
+   desc:'The serialised hand-off: the decision Record, all ProviderRecords, and the PersistMode.',
+   members:['Marshal()/Unmarshal()','{EventID, RequestID, Decision, ProviderResponses, PersistMode}']},
+
+  // ---- driven adapters: consumer (col 5) ----
+  {id:'consumer.Handler', label:'Handler', pkg:'consumer', kind:'struct', col:5, lane:'main',
+   desc:'Async worker logic shared by Lambda and the local poller: idempotently writes audit, routes MANUAL_REVIEW to review, emits to retraining.',
+   members:['New(audit.Sink, ReviewSink, RetrainingSink, log)','Process(ctx, ev)','ProcessBatch(ctx, []Message) []failedIDs','writeAudit()']},
+  {id:'consumer.ReviewSink', label:'ReviewSink', pkg:'consumer', kind:'iface', col:5, lane:'main',
+   desc:'Port for queuing manual-review cases.', members:['EnqueueReview(ctx, ScoringEvent) error']},
+  {id:'consumer.RetrainingSink', label:'RetrainingSink', pkg:'consumer', kind:'iface', col:5, lane:'main',
+   desc:'Port for emitting events to the model-retraining stream.', members:['Emit(ctx, ScoringEvent) error']},
+  {id:'consumer.LoggingReviewSink', label:'LoggingReviewSink', pkg:'consumer', kind:'struct', col:5, lane:'main',
+   desc:'Logging stand-in for the review queue (dedups). implements consumer.ReviewSink.', members:['NewLoggingReviewSink(log)','EnqueueReview()']},
+  {id:'consumer.LoggingRetrainingSink', label:'LoggingRetrainingSink', pkg:'consumer', kind:'struct', col:5, lane:'main',
+   desc:'Logging stand-in for the retraining stream (dedups). implements consumer.RetrainingSink.', members:['NewLoggingRetrainingSink(log)','Emit()']},
+
+  // ---- cross-cutting (bottom band) ----
+  {id:'domain', label:'domain', pkg:'domain', kind:'data', col:3, lane:'cross',
+   desc:'The dependency-free heart: the business types everyone shares. No imports — nothing depends inward on transports or vendors.',
+   members:['Application','RiskData','ScoreResult','Decision = Approve | Decline | ManualReview']},
+  {id:'auth.Validator', label:'auth.Validator', pkg:'auth', kind:'iface', col:1, lane:'cross',
+   desc:'Pluggable token validation, used identically by HTTP middleware and gRPC interceptors. Carries Claims through context.',
+   members:['Validator.Validate(ctx, token) (Claims, error)','AllowAll · HS256 (NewHS256)','BearerToken()','NewContext/FromContext/SubjectFromContext']},
+  {id:'reqid', label:'reqid', pkg:'reqid', kind:'func', col:1, lane:'cross',
+   desc:'Transport-agnostic correlation id carried in context and the X-Request-ID header. Shared by both edges and the service.',
+   members:['Generate()','NewContext/FromContext','HeaderName = "X-Request-ID"']},
+  {id:'metrics.Recorder', label:'metrics.Recorder', pkg:'metrics', kind:'iface', col:5, lane:'cross',
+   desc:'Per-vendor outcome+latency recording. Nop (default), Collector (in-mem aggregate), EMFRecorder (CloudWatch EMF).',
+   members:['Recorder.ObserveProvider(name, Outcome, latency)','Nop · Collector · EMFRecorder','Outcome = Success|Error|Timeout|BreakerOpen']},
+  {id:'config.Config', label:'config.Config', pkg:'config', kind:'struct', col:0, lane:'cross',
+   desc:'Single env-driven config struct with safe defaults; embeds scorer.Config, providers.GuardConfig, audit.PersistMode.',
+   members:['Load() Config','ports/timeouts · auth · persist · async · metrics · demo flags']},
+  {id:'awscfg', label:'awscfg', pkg:'awscfg', kind:'func', col:0, lane:'cross',
+   desc:'AWS SDK v2 bootstrap with LocalStack endpoint override; constructs the SQS and DynamoDB clients.',
+   members:['Load(ctx) aws.Config','SQS(cfg) *sqs.Client','Dynamo(cfg) *dynamodb.Client']},
+];
+
+const LINKS = [
+  // composition root: cmd/server injects the synchronous graph
+  ['cmd/server','metrics.Recorder','injects'],
+  ['cmd/server','providers.guardedProvider','injects'],
+  ['cmd/server','scorer.Scorer','injects'],
+  ['cmd/server','events.Publisher','injects'],
+  ['cmd/server','service.ScoringService','injects'],
+  ['cmd/server','auth.Validator','injects'],
+  ['cmd/server','httpapi.NewRouter','injects'],
+  ['cmd/server','grpcapi.Server','injects'],
+  ['cmd/server','httpapi.Probe','injects'],
+  ['cmd/server','config.Config','depends'],
+  // cmd/consumer + cmd/worker: async graph
+  ['cmd/consumer','consumer.Handler','injects'],
+  ['cmd/consumer','audit.DynamoSink','injects'],
+  ['cmd/consumer','consumer.LoggingReviewSink','injects'],
+  ['cmd/consumer','consumer.LoggingRetrainingSink','injects'],
+  ['cmd/consumer','awscfg','depends'],
+  ['cmd/worker','consumer.Handler','injects'],
+  ['cmd/worker','audit.DynamoSink','injects'],
+  ['cmd/worker','consumer.LoggingReviewSink','injects'],
+  ['cmd/worker','consumer.LoggingRetrainingSink','injects'],
+  ['cmd/worker','awscfg','depends'],
+
+  // HTTP edge wiring
+  ['httpapi.NewRouter','httpapi.middleware','depends'],
+  ['httpapi.NewRouter','httpapi.scoreHandler','depends'],
+  ['httpapi.NewRouter','httpapi.Probe','depends'],
+  ['httpapi.scoreHandler','httpapi.scorerPort','depends'],
+  ['httpapi.middleware','auth.Validator','depends'],
+  ['httpapi.middleware','reqid','depends'],
+  // gRPC edge wiring
+  ['grpcapi.Server','grpcapi.scorerPort','depends'],
+  ['grpcapi.interceptors','auth.Validator','depends'],
+  ['grpcapi.interceptors','reqid','depends'],
+
+  // service satisfies both transport ports
+  ['service.ScoringService','httpapi.scorerPort','implements'],
+  ['service.ScoringService','grpcapi.scorerPort','implements'],
+  ['service.ScoringService','service.Scorer','depends'],
+  ['service.ScoringService','events.Publisher','depends'],
+  ['service.ScoringService','audit.Record','depends'],
+  ['service.ScoringService','auth.Validator','depends'],
+  ['service.ScoringService','reqid','depends'],
+
+  // core satisfies the service port; depends on the driven port
+  ['scorer.Scorer','service.Scorer','implements'],
+  ['scorer.Scorer','ports.Provider','depends'],
+  ['scorer.Scorer','scorer.Config','depends'],
+  ['scorer.Scorer','scorer.pipeline','depends'],
+  ['scorer.NaiveScorer','ports.Provider','depends'],
+  ['scorer.NaiveScorer','scorer.pipeline','depends'],
+  ['scorer.pipeline','ports.Provider','depends'],
+
+  // provider adapters implement the driven port
+  ['providers.Simulated','ports.Provider','implements'],
+  ['providers.guardedProvider','ports.Provider','implements'],
+  ['providers.guardedProvider','ports.Provider','depends'],   // wraps an inner Provider
+  ['providers.guardedProvider','metrics.Recorder','depends'],
+  ['providers.Set','ports.Provider','data'],
+
+  // audit adapters implement Sink
+  ['audit.LogSink','audit.Sink','implements'],
+  ['audit.MemorySink','audit.Sink','implements'],
+  ['audit.DynamoSink','audit.Sink','implements'],
+
+  // events adapters implement Publisher; event carries audit types
+  ['events.LogPublisher','events.Publisher','implements'],
+  ['events.MemoryPublisher','events.Publisher','implements'],
+  ['events.SQSPublisher','events.Publisher','implements'],
+  ['events.ScoringEvent','audit.Record','data'],
+  ['events.Publisher','events.ScoringEvent','data'],
+
+  // consumer
+  ['consumer.Handler','audit.Sink','depends'],
+  ['consumer.Handler','consumer.ReviewSink','depends'],
+  ['consumer.Handler','consumer.RetrainingSink','depends'],
+  ['consumer.Handler','events.ScoringEvent','data'],
+  ['consumer.LoggingReviewSink','consumer.ReviewSink','implements'],
+  ['consumer.LoggingRetrainingSink','consumer.RetrainingSink','implements'],
+
+  // metrics implementers folded into the Recorder node detail; one structural edge:
+  ['metrics.Recorder','metrics.Recorder','noop'], // placeholder removed below
+
+  // config aggregates sub-configs
+  ['config.Config','scorer.Config','depends'],
+
+  // domain usage (toggle-able)
+  ['httpapi.scoreHandler','domain','data'],
+  ['grpcapi.Server','domain','data'],
+  ['service.ScoringService','domain','data'],
+  ['scorer.Scorer','domain','data'],
+  ['ports.Provider','domain','data'],
+  ['providers.Simulated','domain','data'],
+  ['audit.Record','domain','data'],
+].filter(l => l[2] !== 'noop');
+
+const EDGE_STYLE = {
+  implements:{color:'#3fb950', dash:'6 4', label:'implements'},
+  depends:   {color:'#8b98a8', dash:'',    label:'depends / calls'},
+  injects:   {color:'#d29922', dash:'',    label:'injected into'},
+  data:      {color:'#586069', dash:'2 4', label:'uses domain / data'},
+};
+
+/* ============================================================
+   RENDER
+============================================================ */
+const svg = d3.select('#svg');
+const gZoom = svg.append('g');
+const gLink = gZoom.append('g');
+const gNode = gZoom.append('g');
+const gHdr  = gZoom.append('g');
+let W = 0, H = 0;
+
+const byId = new Map(NODES.map(n=>[n.id,n]));
+const links = LINKS.map(([s,t,type])=>({source:s,target:t,type}));
+// adjacency for focus
+const adj = new Map(NODES.map(n=>[n.id,new Set()]));
+links.forEach(l=>{adj.get(l.source)?.add(l.target); adj.get(l.target)?.add(l.source);});
+
+const COLS = ['Composition','Transports (driving)','Service','Core','Port','Driven adapters'];
+const colX = c => 120 + c*((Math.max(W,1280)-260)/5);
+const laneY = (lane,col) => lane==='cross' ? H-110 : (col===5? H*0.46 : H*0.42);
+
+const enabled = {implements:true, depends:true, injects:true, data:false};
+
+const symbol = d3.symbol().size(360);
+function symPath(kind){
+  const t = kind==='iface'?d3.symbolDiamond : kind==='func'?d3.symbolSquare :
+            kind==='entry'?d3.symbolTriangle : kind==='data'?d3.symbolWye : d3.symbolCircle;
+  return symbol.type(t)();
+}
+
+// arrow markers
+const defs = svg.append('defs');
+Object.entries(EDGE_STYLE).forEach(([k,s])=>{
+  defs.append('marker').attr('id','arw-'+k).attr('viewBox','0 -5 10 10')
+    .attr('refX',20).attr('refY',0).attr('markerWidth',6).attr('markerHeight',6)
+    .attr('orient','auto').append('path').attr('d','M0,-4L9,0L0,4').attr('fill',s.color);
+});
+
+let linkSel, nodeSel;
+
+function draw(){
+  linkSel = gLink.selectAll('path').data(links).join('path')
+    .attr('class','link')
+    .attr('stroke',d=>EDGE_STYLE[d.type].color)
+    .attr('stroke-dasharray',d=>EDGE_STYLE[d.type].dash)
+    .attr('stroke-width',d=>d.type==='injects'?1.8:1.3)
+    .attr('opacity',d=>enabled[d.type]?0.55:0)
+    .attr('marker-end',d=>`url(#arw-${d.type})`);
+
+  nodeSel = gNode.selectAll('g.node').data(NODES,d=>d.id).join(enter=>{
+    const g = enter.append('g').attr('class','node').call(drag);
+    g.append('path').attr('d',d=>symPath(d.kind))
+      .attr('fill',d=>PKG_COLOR[d.pkg]||'#888')
+      .attr('stroke','#0b0e13').attr('stroke-width',1.4)
+      .attr('opacity',0.95);
+    g.append('text').attr('x',14).attr('y',4)
+      .text(d=>d.label||d.id);
+    g.on('click',(e,d)=>{e.stopPropagation();focus(d);})
+     .on('mouseenter',(e,d)=>g.filter(x=>x===d).select('path').attr('stroke','#fff'))
+     .on('mouseleave',()=>nodeSel.select('path').attr('stroke','#0b0e13'));
+    return g;
+  });
+}
+
+const sim = d3.forceSimulation(NODES)
+  .force('link', d3.forceLink(links).id(d=>d.id).distance(95).strength(0.25))
+  .force('charge', d3.forceManyBody().strength(-560))
+  .force('x', d3.forceX(d=>colX(d.col)).strength(0.45))
+  .force('y', d3.forceY(d=>laneY(d.lane,d.col)).strength(d=>d.lane==='cross'?0.55:0.16))
+  .force('collide', d3.forceCollide(46))
+  .on('tick',tick);
+
+function tick(){
+  linkSel.attr('d',d=>{
+    const x1=d.source.x,y1=d.source.y,x2=d.target.x,y2=d.target.y;
+    const dr=Math.hypot(x2-x1,y2-y1)*1.6;
+    return `M${x1},${y1}A${dr},${dr} 0 0,1 ${x2},${y2}`;
+  });
+  nodeSel.attr('transform',d=>`translate(${d.x},${d.y})`);
+}
+
+function drag(sel){
+  return sel.call(d3.drag()
+    .on('start',(e,d)=>{if(!e.active)sim.alphaTarget(0.25).restart();d.fx=d.x;d.fy=d.y;})
+    .on('drag',(e,d)=>{d.fx=e.x;d.fy=e.y;})
+    .on('end',(e,d)=>{if(!e.active)sim.alphaTarget(0);d.fx=null;d.fy=null;}));
+}
+
+// zoom/pan
+svg.call(d3.zoom().scaleExtent([0.35,2.5]).on('zoom',e=>gZoom.attr('transform',e.transform)))
+   .on('click',()=>resetFocus());
+
+/* ---- focus / highlight ---- */
+let focused = null;
+function focus(d){
+  focused = d.id;
+  const keep = adj.get(d.id); keep.add(d.id);
+  nodeSel.attr('opacity',n=>keep.has(n.id)?1:0.12);
+  nodeSel.select('text').attr('font-weight',n=>n.id===d.id?700:400);
+  linkSel.attr('opacity',l=>{
+    if(!enabled[l.type]) return 0;
+    return (l.source.id===d.id||l.target.id===d.id)?0.95:0.05;
+  }).attr('stroke-width',l=>(l.source.id===d.id||l.target.id===d.id)?2.2:1.1);
+  showDetail(d);
+}
+function resetFocus(){
+  focused=null;
+  nodeSel.attr('opacity',1).select('text').attr('font-weight',400);
+  linkSel.attr('opacity',l=>enabled[l.type]?0.55:0).attr('stroke-width',l=>l.type==='injects'?1.8:1.3);
+}
+
+/* ---- detail panel ---- */
+const detail = d3.select('#detail');
+function showDetail(d){
+  const ins = links.filter(l=>l.target.id===d.id);
+  const outs = links.filter(l=>l.source.id===d.id);
+  const kindLabel = {iface:'interface',struct:'struct',func:'functions',entry:'entrypoint',data:'types'}[d.kind];
+  let html = `<div class="pkg">${d.pkg}</div><h2>${d.label||d.id}</h2>`;
+  html += `<span class="badge">${kindLabel}</span><span class="badge">col ${d.col} · ${d.lane}</span>`;
+  html += `<div class="desc">${d.desc||''}</div>`;
+  if(d.members?.length){
+    html += `<div class="sect">Members</div><ul>`+d.members.map(m=>`<li>${esc(m)}</li>`).join('')+`</ul>`;
+  }
+  if(outs.length){
+    html += `<div class="sect">Outgoing</div><ul>`+outs.map(l=>relLi(l,'target')).join('')+`</ul>`;
+  }
+  if(ins.length){
+    html += `<div class="sect">Incoming</div><ul>`+ins.map(l=>relLi(l,'source')).join('')+`</ul>`;
+  }
+  detail.html(html);
+  detail.selectAll('.relnode').on('click',function(){const id=this.dataset.id;focus(byId.get(id));});
+}
+function relLi(l,end){
+  const other = l[end];
+  const verb = EDGE_STYLE[l.type].label;
+  const col = EDGE_STYLE[l.type].color;
+  return `<li><span style="color:${col}">${verb}</span> <span class="arrow">→</span> <span class="relnode" data-id="${other.id}">${other.label||other.id}</span></li>`;
+}
+function esc(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+
+/* ---- edge toggles ---- */
+const toggleWrap = d3.select('#edgeToggles');
+Object.entries(EDGE_STYLE).forEach(([k,s])=>{
+  const lab = toggleWrap.append('label').attr('class','chk'+(enabled[k]?' on':''));
+  lab.append('input').attr('type','checkbox').property('checked',enabled[k])
+     .on('change',function(){enabled[k]=this.checked;lab.classed('on',this.checked);
+       focused?focus(byId.get(focused)):resetFocus();});
+  lab.append('span').style('color',s.color).text('●');
+  lab.append('span').text(s.label);
+});
+
+/* ---- search ---- */
+d3.select('#search').on('input',function(){
+  const q=this.value.trim().toLowerCase();
+  if(!q){resetFocus();return;}
+  nodeSel.attr('opacity',n=>(n.id+(n.label||'')+(n.members||[]).join(' ')).toLowerCase().includes(q)?1:0.1)
+         .select('text').attr('font-weight',n=>(n.id+(n.label||'')).toLowerCase().includes(q)?700:400);
+  linkSel.attr('opacity',0.06);
+});
+d3.select('#resetBtn').on('click',()=>{d3.select('#search').property('value','');resetFocus();});
+
+/* ---- trace request flow ---- */
+const FLOW=['cmd/server','httpapi.NewRouter','httpapi.middleware','httpapi.scoreHandler','httpapi.scorerPort',
+  'service.ScoringService','service.Scorer','scorer.Scorer','ports.Provider','providers.guardedProvider',
+  'providers.Simulated','audit.Record','events.Publisher'];
+d3.select('#flowBtn').on('click',()=>{
+  const set=new Set(FLOW);
+  nodeSel.attr('opacity',n=>set.has(n.id)?1:0.1)
+         .select('text').attr('font-weight',n=>set.has(n.id)?700:400);
+  linkSel.attr('opacity',l=>set.has(l.source.id)&&set.has(l.target.id)&&enabled[l.type]?0.95:0.05)
+         .attr('stroke-width',l=>set.has(l.source.id)&&set.has(l.target.id)?2.2:1);
+  detail.html('<div class="pkg">request path</div><h2>POST /v1/score</h2><div class="desc">The synchronous hot path, edge → core → vendors → audit/event. Click any highlighted node to drill in.</div><div class="sect">Order</div><ul>'+FLOW.map(id=>`<li><span class="relnode" data-id="${id}">${(byId.get(id).label||id)}</span></li>`).join('')+'</ul>');
+  detail.selectAll('.relnode').on('click',function(){focus(byId.get(this.dataset.id));});
+});
+
+/* ---- column + lane headers ---- */
+function headers(){
+  gHdr.selectAll('text.colhdr').data(COLS).join('text')
+    .attr('class','colhdr').attr('text-anchor','middle')
+    .attr('x',(d,i)=>colX(i)).attr('y',34).text(d=>d);
+  gHdr.selectAll('text.lanehdr').data([['core / request path',H*0.42],['cross-cutting',H-130]])
+    .join('text').attr('class','lanehdr').attr('x',12).attr('y',d=>d[1]).text(d=>d[0]);
+}
+
+/* ---- legend ---- */
+function legend(){
+  const l=d3.select('#legend');
+  l.html('<b>Edges</b>');
+  Object.values(EDGE_STYLE).forEach(s=>{
+    l.append('div').attr('class','lgrow').html(
+      `<span class="lgline" style="border-top:2px ${s.dash?'dashed':'solid'} ${s.color}"></span>${s.label}`);
+  });
+  l.append('div').attr('class','lgrow').style('margin-top','10px').html('<b>Shapes</b>');
+  [['◆','interface'],['●','struct'],['■','funcs'],['▲','entrypoint'],['✶','data/types']].forEach(([sym,t])=>{
+    l.append('div').attr('class','lgrow').html(`<span style="width:14px;text-align:center">${sym}</span>${t}`);
+  });
+  l.append('div').attr('class','lgrow').style('margin-top','10px').html('<b>Colour = package</b>');
+}
+
+/* ---- size & boot ---- */
+function resize(){
+  const r=document.getElementById('graph').getBoundingClientRect();
+  W=r.width;H=r.height;svg.attr('viewBox',`0 0 ${W} ${H}`);
+  sim.force('x',d3.forceX(d=>colX(d.col)).strength(0.45))
+     .force('y',d3.forceY(d=>laneY(d.lane,d.col)).strength(d=>d.lane==='cross'?0.55:0.16));
+  headers();sim.alpha(0.6).restart();
+}
+draw();legend();window.addEventListener('resize',resize);resize();
+</script>
+</body>
+</html>
