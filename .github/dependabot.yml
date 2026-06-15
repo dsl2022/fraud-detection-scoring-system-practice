@@ -1,0 +1,28 @@
+# Automated dependency + action updates. Keeps SHA-pinned actions current
+# (Dependabot bumps the pin AND the version comment), Go modules patched, base
+# images fresh, and Terraform providers up to date.
+
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: terraform
+    directories:
+      - /deploy/terraform
+      - /deploy/terraform/bootstrap
+    schedule:
+      interval: weekly

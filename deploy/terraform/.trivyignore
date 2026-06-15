@@ -1,0 +1,39 @@
+# Triaged Trivy IaC findings — accepted risks with justification.
+# Reviewed: each entry is a deliberate architecture decision, not an oversight.
+# Anything NOT listed here is expected to be fixed (the CI gate fails on it).
+# Re-review on any change to networking, the ALB, or the state backend.
+
+# AWS-0054 (CRITICAL) ALB listener uses HTTP, not HTTPS.
+#   Accepted: this is the DEV-ONLY listener (count=0 when a cert is set). prod
+#   sets certificate_arn -> the HTTPS listener is used and HTTP redirects. So
+#   HTTPS IS enforced everywhere a cert exists; dev runs HTTP by design.
+AWS-0054
+
+# AWS-0104 (CRITICAL) Security group allows unrestricted egress (0.0.0.0/0).
+#   Accepted: tasks need outbound to ECR, AWS APIs, and vendor endpoints.
+#   Locking egress to specific CIDRs/prefix-lists is a separate hardening effort.
+AWS-0104
+
+# AWS-0053 (HIGH) Load balancer is exposed publicly.
+#   Accepted: this IS the public, internet-facing scoring API. Intentional.
+AWS-0053
+
+# AWS-0132 (HIGH) S3 bucket not encrypted with a customer-managed KMS key.
+#   Accepted: state buckets use AWS-managed KMS (aws:kms). Adequate for this
+#   project; a CMK adds key rotation/policy overhead without a requirement.
+AWS-0132
+
+# AWS-0164 (HIGH) Subnet assigns public IPs.
+#   Accepted: the PUBLIC subnets host the ALB and NAT gateway by design. App
+#   tasks run in PRIVATE subnets with no public IPs.
+AWS-0164
+
+# AWS-0024 (MEDIUM) Point-in-time recovery not enabled.
+#   Accepted: applies to the Terraform lock table (ephemeral lock rows). The
+#   audit table — the actual system of record — DOES enable PITR.
+AWS-0024
+
+# AWS-0178 (MEDIUM) VPC has no flow logs.
+#   FOLLOW-UP (accepted for now): VPC Flow Logs -> CloudWatch is a worthwhile
+#   add for network forensics; tracked as a future hardening task.
+AWS-0178
