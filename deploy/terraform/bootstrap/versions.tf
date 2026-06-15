@@ -5,7 +5,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.60"
+      version = "~> 6.50"
     }
     # Used to read GitHub's TLS cert at plan time so we never hardcode a
     # thumbprint that can rotate out from under us.
