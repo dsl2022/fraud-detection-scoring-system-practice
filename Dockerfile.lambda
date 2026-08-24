@@ -4,7 +4,7 @@
 # Built on the AWS-provided base for custom runtimes; the compiled Go binary is
 # the `bootstrap` that speaks the Lambda Runtime API (via aws-lambda-go).
 
-FROM golang:1.25 AS build
+FROM golang:1.27 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
