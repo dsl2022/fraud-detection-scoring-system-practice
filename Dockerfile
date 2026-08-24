@@ -5,7 +5,7 @@
 # on the static base with no dynamic linker.
 
 # ---- build stage ----
-FROM golang:1.25 AS build
+FROM golang:1.27 AS build
 WORKDIR /src
 
 # Cache deps separately from source so code changes don't re-download modules.
